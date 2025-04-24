@@ -21,7 +21,7 @@
 //Define state machine states here, e.g.:
 #define INIT 0
 #define WAIT_FOR_SYN 1
-#define SEND_ACK 2
+#define WAIT_FOR_ACK 2
 #define CONNECTED 3
 
 //Message flags
@@ -53,6 +53,10 @@ int timerRunning = 0;
 int newMessage = 0;
 message messageRecvd;
 message msgToSend = { 0 };
+message ack;
+
+int sock;
+struct sockaddr_in clientAddr;
 
 
 //Timer functions
@@ -82,13 +86,13 @@ void stop_timer()
     timerRunning = 0;
 }
 
-void timeout_handler()
+void timeout_handler(int signum)
 {
   /*Specify the actions to be executed
   based on the state when the timer expires*/
   switch (state)
   {
-    case YOUR_STATE:
+    case SEND_ACK:
       /*actions to be executed if state == YOUR_STATE*/
       state = NEW_STATE;
       break;
@@ -226,14 +230,40 @@ void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if 
     switch (state)
     {
       case INIT:
-        
-      
-        state = WAIT_FOR_SYN;
+		  printf("SERVER: Waiting for SYN\n");
+          state = WAIT_FOR_SYN;
+          break;
+      case WAIT_FOR_SYN:
+          if (newMessage == 1 && messageRecvd.flag == SYN)
+          {
+              newMessage = 0;
 
+			  // Check the checksum
+			  int recivedChecksum = messageRecvd.checkSum;
+			  messageRecvd.checkSum = 0;
+			  int calculatedChecksum = checksumCalc(messageRecvd);
+
+              if (recivedChecksum == calculatedChecksum) {
+				  printf("SERVER: Recived valid syn. Sending SYNACK\n");
+				  messageToSend.flag = SYNACK;
+				  messageToSend.seqNr = 0;
+				  messageToSend.checkSum = checksumCalc(messageToSend);
+
+				  mySendTo(sock, (struct sockaddr*)&clientAddr);
+
+				  state = WAIT_FOR_ACK;
+              }
+              else 
+              {
+				  printf("SERVER: Checksum mismatch on SYN - ignoring packet\n");
+              }
+          }
         break;
-      case NEW_STATE:
-        ...
-        break;
+	  case SEND_ACK:
+          if (newMessage == 1 && messageRecvd.flag == DATAACK)
+          {
+
+          }
       default:
         printf("Invalid option\n");
     }
@@ -319,7 +349,7 @@ int main(int argc, char *argv[])
   pthread_create(&recvt, NULL, recieveThread, &sock);
 
 
-  connect();//Add arguments if needed
+  connect(sock &clientAddr);//Add arguments if needed
   transmit();//Add arguments if needed
   disconnect();//Add arguments if needed
 
