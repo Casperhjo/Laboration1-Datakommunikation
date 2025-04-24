@@ -23,6 +23,8 @@
 #define WAIT_FOR_SYNACK 2
 #define SEND_ACK 3
 #define CONNECTED 4
+#define WAIT_FOR_FINACK 5
+#define DISCONNECTED 6
 
 
 
@@ -103,6 +105,18 @@ void timeout_handler(int signum)
 
         mySendTo(sock, (struct sockaddr*)&clientAddr);
         start_timer(3);
+        break;
+    case WAIT_FOR_FINACK:
+        stop_timer()
+        printf("CLIENT: FIN TIMEOUT -> SENDING FIN\n");
+
+        msgToSend.flag = FIN;
+        msgToSend.seqNr = 0;
+        msgToSend.checkSum = checksumCalc(msgToSend);
+
+        mySendTo(sock, (struct sockaddr*)&clientAddr);
+        start_timer(3);
+
         break;
     default:
       printf("Invalid option\n");
@@ -229,6 +243,8 @@ void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if 
 
                 break;
             case WAIT_FOR_SYNACK:
+                if (timerRunning == 0)
+                    timeout_handler(sock, clientAddr);
                 if (newMessage == 1 && messageRecvd.flag == SYNACK)
                 {
                     newMessage = 0;
@@ -288,26 +304,45 @@ void transmit()//Add input parameters if needed
   }
 }
 
-void disconnect()//Add input parameters if needed
+void disconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
 {
 
   /*Implement the three-way handshake state machine
   for the teardown*/
 
   //local variables if needed
-
+    int nrTimeouts = 0;
 
   //Loop switch-case
   while(1) //Add the condition to leave the state machine
   {
     switch (state)
     {
-      case YOUR_STATE:
-        /*actions to be executed if state == YOUR_STATE*/
-        state = NEW_STATE;
-        break;
-      case NEW_STATE:
-        break;
+      case INIT:
+          printf("CLIENT: INIT -> SENDING FIN\n");
+
+          msgToSend.flag = FIN;
+          msgToSend.seqNr = 0;
+          msgToSend.checkSum = checksumCalc(msgToSend);
+
+          mySendTo(sock, (struct sockaddr*)&clientAddr);
+          start_timer(3);
+
+          state = WAIT_FOR_FINACK;
+          break;
+      case WAIT_FOR_FINACK:
+          if (timeout_handler(, ))
+          printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
+
+          msgToSend.flag = ACK;
+          msgToSend.seqNr = 0;
+          msgToSend.checkSum = checksumCalc(msgToSend);
+
+          mySendTo(sock, (struct sockaddr*)&clientAddr);
+
+          state = INIT;
+          break;
+
       default:
         printf("Invalid option\n");
     }
@@ -378,7 +413,7 @@ int main(int argc, char *argv[]) {
 
   connect(sock, &clientAddr);//Add arguments if needed
   transmit();//Add arguments if needed
-  disconnect();//Add arguments if needed
+  disconnect(sock, &clientAddr);//Add arguments if needed
 
 
   return 0;
