@@ -61,6 +61,8 @@ message msgToSend = { 0 };
 
 int sock;
 struct sockaddr_in clientAddr;
+int checksumCalc(message msg);
+int mySendTo(int sock, struct sockaddr* recvAddr);
 
 
 //Timer functions
@@ -107,7 +109,7 @@ void timeout_handler(int signum)
         start_timer(3);
         break;
     case WAIT_FOR_FINACK:
-        stop_timer()
+        stop_timer();
         printf("CLIENT: FIN TIMEOUT -> SENDING FIN\n");
 
         msgToSend.flag = FIN;
@@ -125,16 +127,18 @@ void timeout_handler(int signum)
 
 
 //Message handling functions
-void* recieveThread(int* sock)
+void* recieveThread(void* sockArg)
 {
-  socklen_t len = 0;
-  struct sockaddr_in serverAddress;
+  int sockFD = *((int*)sockArg); // ✅ now sockArg is defined
+
+  socklen_t len = sizeof(struct sockaddr_in);
+  struct sockaddr_in clientAddress;
 
   while (1)
   {
     if (newMessage == 0) {
-      int bytesRecieved = recvfrom(*sock, &messageRecvd, sizeof(message), 0,
-                                  (struct sockaddr*)&serverAddress, &len);
+      int bytesRecieved = recvfrom(sockFD, &messageRecvd, sizeof(message), 0,
+                                  (struct sockaddr*)&clientAddress, &len);
 
       if (bytesRecieved < 0)
       {
@@ -219,7 +223,7 @@ int mySendTo(int sock, struct sockaddr* recvAddr)
 
 
 //State machine functions
-void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
+void myconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
 {
     /*Implement the three-way handshake state machine
     for the connection setup*/
@@ -243,8 +247,6 @@ void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if 
 
                 break;
             case WAIT_FOR_SYNACK:
-                if (timerRunning == 0)
-                    timeout_handler(sock, clientAddr);
                 if (newMessage == 1 && messageRecvd.flag == SYNACK)
                 {
                     newMessage = 0;
@@ -292,12 +294,6 @@ void transmit()//Add input parameters if needed
   {
     switch (state)
     {
-      case YOUR_STATE:
-        /*actions to be executed if state == YOUR_STATE*/
-        state = NEW_STATE;
-        break;
-      case NEW_STATE:
-        break;
       default:
         printf("Invalid option\n");
     }
@@ -331,10 +327,9 @@ void disconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters 
           state = WAIT_FOR_FINACK;
           break;
       case WAIT_FOR_FINACK:
-          if (timeout_handler(, ))
           printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
 
-          msgToSend.flag = ACK;
+          msgToSend.flag = DATAACK;
           msgToSend.seqNr = 0;
           msgToSend.checkSum = checksumCalc(msgToSend);
 
@@ -411,7 +406,7 @@ int main(int argc, char *argv[]) {
   clientAddr.sin_addr.s_addr = inet_addr(dstHost);
 
 
-  connect(sock, &clientAddr);//Add arguments if needed
+  myconnect(sock, &clientAddr);//Add arguments if needed
   transmit();//Add arguments if needed
   disconnect(sock, &clientAddr);//Add arguments if needed
 
