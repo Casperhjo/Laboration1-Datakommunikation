@@ -92,10 +92,15 @@ void timeout_handler(int signum)
   based on the state when the timer expires*/
   switch (state)
   {
-    case SEND_ACK:
-      /*actions to be executed if state == YOUR_STATE*/
-      state = NEW_STATE;
-      break;
+    case WAIT_FOR_ACK:
+		printf("SERVER: ACK TIMEOUT -> SENDING SYNACK\n");
+
+		//recalculate checksum before resending
+		messageToSend.checkSum = checksumCalc(messageToSend);
+		mySendTo(sock, (struct sockaddr*)&clientAddr);
+
+		start_timer(3); // restart timer
+        break;
     default:
       printf("Invalid option\n");
   }
@@ -248,6 +253,7 @@ void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if 
 				  messageToSend.flag = SYNACK;
 				  messageToSend.seqNr = 0;
 				  messageToSend.checkSum = checksumCalc(messageToSend);
+				  start_timer(3);
 
 				  mySendTo(sock, (struct sockaddr*)&clientAddr);
 
@@ -259,10 +265,27 @@ void connect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if 
               }
           }
         break;
-	  case SEND_ACK:
+	  case WAIT_FOR_ACK:
           if (newMessage == 1 && messageRecvd.flag == DATAACK)
           {
+			  newMessage = 0;
 
+			  // Check the checksum
+			  int recivedChecksum = messageRecvd.checkSum;
+			  messageRecvd.checkSum = 0;
+			  int calculatedChecksum = checksumCalc(messageRecvd);
+			  stop_timer();
+
+			  if (recivedChecksum == calculatedChecksum) 
+              {
+				  printf("SERVER: Recived valid ACK. Connection established\n");
+
+				  state = CONNECTED;
+              }
+              else
+              {
+				  printf("SERVER: Checksum mismatch on ACK - ignoring packet\n");
+              }
           }
       default:
         printf("Invalid option\n");
