@@ -25,7 +25,8 @@
 #define CONNECTED 4
 #define WAIT_FOR_FINACK 5
 #define DISCONNECTED 6
-
+#define WAIT_GBN 7
+#define WAIT_SR 8
 
 
 //Message flags
@@ -120,8 +121,11 @@ void timeout_handler(int signum)
         start_timer(3);
 
         break;
+    case WAIT_GBN:
+        nextPacket = windowBase;
+        break;
     default:
-      printf("Invalid option\n");
+        printf("Invalid option\n");
   }
 }
 
@@ -281,67 +285,160 @@ void myconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters i
     }
 }
 
-void transmit()//Add input parameters if needed
+void transmit(int sock, struct sockaddr_in* clientAddr, char[] dataToSend)//Add input parameters if needed
 {
 
-  /*Implement the sliding window state machine*/
+    /*Implement the sliding window state machine*/
 
-  //local variables if needed
+    //local variables if needed
+    int[8] ackBuffer;
+    nrBuffered = 0;
+    start_timer(3);
 
-
-  //Loop switch-case
-  while(1) //Add the condition to leave the state machine
-  {
-    switch (state)
+    //Loop switch-case
+    while (1) //Add the condition to leave the state machine
     {
-      default:
-        printf("Invalid option\n");
+        switch (state)
+        {
+        case WAIT_GBN:
+            if (next >= windowBase && next <= (windowBase + windowSize))      // sending packages
+            {
+                printf("CLIENT: GBN -> SENDING package nr:%n\n", &nextPacket);
+
+                msgToSend.flag = DATA;
+                msgToSend.seqNr = nextPacket;
+                msgToSend.data = dataToSend[nextPacket++];
+                msgToSend.checkSum = checksumCalc(msgToSend);
+
+                mySendTo(sock, (struct sockaddr*)&clientAddr);
+            }
+            else if (newMessage == 1 && messageRecvd.flag == DATAACK)     // new message
+            {
+                if (messageRecvd.seqNr == windowBase)
+                {
+                    printf("CLIENT: GBN -> RECEIVED package nr:%n\n", &messageRecvd.seqNr);
+                    windowBase++;
+                    stop_timer;
+                    start_timer(3);
+                }
+                else if (messageRecvd.seqNr > windowBase)
+                    ackBuffer[nrBuffered++] = messageRecvd.seqNr;    // add an out of order ACK to the buffer
+                newMessage = 0;
+            }
+            else if (nrBuffered > 0)      // check the buffer
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    if (ackBuffer[i] == windowBase)
+                    {
+                        windowBase++;
+                        stop_timer;
+                        start_timer(3);
+                        ackBuffer[i] = default;
+                        nrBuffered--;
+                    }
+                    else if (ackBuffer[i] < windowBase)
+                    {
+                        ackBuffer[i] = default;
+                        nrBuffered--;
+                    }
+                }
+            }
+            break;
+        case WAIT_SR:
+            if (next >= windowBase && next <= (windowBase + windowSize))      // sending packages
+            {
+                printf("CLIENT: SR -> SENDING package nr:%n\n", &nextPacket);
+
+                msgToSend.flag = DATA;
+                msgToSend.seqNr = nextPacket;
+                msgToSend.data = dataToSend[nextPacket++];
+                msgToSend.checkSum = checksumCalc(msgToSend);
+
+                mySendTo(sock, (struct sockaddr*)&clientAddr);
+                start_timer(3);
+            }
+            else if (newMessage == 1)     // new message
+            {
+                if (messageRecvd.seqNr == windowBase && messageRecvd.flag == DATAACK)
+                {
+                    stop_timer;
+                    printf("CLIENT: GBN -> RECEIVED package nr:%n\n", &messageRecvd.seqNr);
+                    windowBase++;
+                    start_timer(3);
+                }
+                else if (messageRecvd.seqNr > windowBase)
+                    ackBuffer[nrBuffered++] = messageRecvd.seqNr;    // add an out of order ACK to the buffer
+                newMessage = 0;
+            }
+            else if (nrBuffered > 0)      // check the buffer
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    if (ackBuffer[i] == windowBase)
+                    {
+                        windowBase++;
+                        stop_timer;
+                        start_timer(3);
+                        ackBuffer[i] = default;
+                        nrBuffered--;
+                    }
+                    else if (ackBuffer[i] < windowBase)
+                    {
+                        ackBuffer[i] = default;
+                        nrBuffered--;
+                    }
+                }
+            }
+            break;
+        default:
+            printf("Invalid option\n");
+        }
     }
-  }
 }
 
 void disconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
 {
 
-  /*Implement the three-way handshake state machine
-  for the teardown*/
+    /*Implement the three-way handshake state machine
+    for the teardown*/
 
-  //local variables if needed
+    //local variables if needed
     int nrTimeouts = 0;
 
-  //Loop switch-case
-  while(1) //Add the condition to leave the state machine
-  {
-    switch (state)
+    //Loop switch-case
+    while (1) //Add the condition to leave the state machine
     {
-      case INIT:
-          printf("CLIENT: INIT -> SENDING FIN\n");
+        switch (state)
+        {
+        case INIT:
+            printf("CLIENT: INIT -> SENDING FIN\n");
 
-          msgToSend.flag = FIN;
-          msgToSend.seqNr = 0;
-          msgToSend.checkSum = checksumCalc(msgToSend);
+            msgToSend.flag = FIN;
+            msgToSend.seqNr = 0;
+            msgToSend.checkSum = checksumCalc(msgToSend);
 
-          mySendTo(sock, (struct sockaddr*)&clientAddr);
-          start_timer(3);
+            mySendTo(sock, (struct sockaddr*)&clientAddr);
+            start_timer(3);
 
-          state = WAIT_FOR_FINACK;
-          break;
-      case WAIT_FOR_FINACK:
-          printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
+            state = WAIT_FOR_FINACK;
+            break;
+        case WAIT_FOR_FINACK:
+            printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
 
-          msgToSend.flag = DATAACK;
-          msgToSend.seqNr = 0;
-          msgToSend.checkSum = checksumCalc(msgToSend);
+            msgToSend.flag = DATAACK;
+            msgToSend.seqNr = 0;
+            msgToSend.checkSum = checksumCalc(msgToSend);
 
-          mySendTo(sock, (struct sockaddr*)&clientAddr);
+            mySendTo(sock, (struct sockaddr*)&clientAddr);
 
-          state = INIT;
-          break;
+            state = INIT;
+            break;
 
-      default:
-        printf("Invalid option\n");
+        default:
+            printf("Invalid option\n");
+        }
     }
-  }
 }
 
 
@@ -407,7 +504,7 @@ int main(int argc, char *argv[]) {
 
 
   myconnect(sock, &clientAddr);//Add arguments if needed
-  transmit();//Add arguments if needed
+  transmit(sock, &clientAddr);//Add arguments if needed
   disconnect(sock, &clientAddr);//Add arguments if needed
 
 
