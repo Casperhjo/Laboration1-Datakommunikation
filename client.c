@@ -17,8 +17,7 @@
 #define PORT 5555
 #define hostNameLength 50
 
-
-//Define state machine states here, e.g.:
+// Define state machine states
 #define INIT 0
 #define WAIT_FOR_SYNACK 2
 #define SEND_ACK 3
@@ -26,9 +25,7 @@
 #define WAIT_FOR_FINACK 5
 #define DISCONNECTED 6
 
-
-
-//Message flags
+// Message flags
 #define SYN 0
 #define SYNACK 1
 #define DATA 2
@@ -37,39 +34,33 @@
 #define FIN 5
 #define FINACK 6
 
-
-typedef struct messageToSend
-{
+typedef struct messageToSend {
   int flag;
   int seqNr;
   int checkSum;
   char data[256];
-}message;
+} message;
 
-
-//Global variables
+// Global variables
 int state = INIT;
 int windowSize = 0;
 int windowBase = 0;
 int nextPacket = 0;
 
 int timerRunning = 0;
-
 int newMessage = 0;
 message messageRecvd;
 message msgToSend = { 0 };
 
 int sock;
 struct sockaddr_in clientAddr;
+
+// Function declarations
 int checksumCalc(message msg);
-int mySendTo(int sock, struct sockaddr* recvAddr);
+int mySendTo(int sock, struct sockaddr* recvAddr, message* msg);
 
-
-//Timer functions
-void start_timer(int duration)
-{
-  if (!timerRunning)
-  {
+void start_timer(int duration) {
+  if (!timerRunning) {
     struct itimerval timer;
     timer.it_value.tv_sec = duration;
     timer.it_value.tv_usec = 0;
@@ -80,73 +71,48 @@ void start_timer(int duration)
   }
 }
 
-void stop_timer()
-{
-  struct itimerval timer;
-    timer.it_value.tv_sec = 0;
-    timer.it_value.tv_usec = 0;
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = 0;
-    setitimer(ITIMER_REAL, &timer, NULL);
-    timerRunning = 0;
+void stop_timer() {
+  struct itimerval timer = {0};
+  setitimer(ITIMER_REAL, &timer, NULL);
+  timerRunning = 0;
 }
 
-void timeout_handler(int signum)
-{
-  /*Specify the actions to be executed
-  based on the state when the timer expires*/
-  switch (state)
-  {
+void timeout_handler(int signum) {
+  switch (state) {
     case WAIT_FOR_SYNACK:
-        stop_timer();
-        printf("CLIENT: SYNACK TIMEOUT -> SENDING SYN\n");
-
-        msgToSend.flag = SYN;
-        msgToSend.seqNr = 0;
-        msgToSend.checkSum = checksumCalc(msgToSend);
-
-        mySendTo(sock, (struct sockaddr*)&clientAddr);
-        start_timer(3);
-        break;
+      stop_timer();
+      printf("CLIENT: SYNACK TIMEOUT -> SENDING SYN\n");
+      msgToSend.flag = SYN;
+      msgToSend.seqNr = 0;
+      msgToSend.checkSum = checksumCalc(msgToSend);
+      mySendTo(sock, (struct sockaddr*)&clientAddr, &msgToSend);
+      start_timer(3);
+      break;
     case WAIT_FOR_FINACK:
-        stop_timer();
-        printf("CLIENT: FIN TIMEOUT -> SENDING FIN\n");
-
-        msgToSend.flag = FIN;
-        msgToSend.seqNr = 0;
-        msgToSend.checkSum = checksumCalc(msgToSend);
-
-        mySendTo(sock, (struct sockaddr*)&clientAddr);
-        start_timer(3);
-
-        break;
+      stop_timer();
+      printf("CLIENT: FIN TIMEOUT -> SENDING FIN\n");
+      msgToSend.flag = FIN;
+      msgToSend.seqNr = 0;
+      msgToSend.checkSum = checksumCalc(msgToSend);
+      mySendTo(sock, (struct sockaddr*)&clientAddr, &msgToSend);
+      start_timer(3);
+      break;
     default:
-      printf("Invalid option\n");
+      printf("Invalid timeout state\n");
   }
 }
 
-
-//Message handling functions
-void* recieveThread(void* sockArg)
-{
-  int sockFD = *((int*)sockArg); // ✅ now sockArg is defined
-
+void* recieveThread(void* sockArg) {
+  int sockFD = *((int*)sockArg);
   socklen_t len = sizeof(struct sockaddr_in);
-  struct sockaddr_in clientAddress;
-
-  while (1)
-  {
+  while (1) {
     if (newMessage == 0) {
       int bytesRecieved = recvfrom(sockFD, &messageRecvd, sizeof(message), 0,
-                                  (struct sockaddr*)&clientAddress, &len);
-
-      if (bytesRecieved < 0)
-      {
+                                   (struct sockaddr*)&clientAddr, &len);
+      if (bytesRecieved < 0) {
         perror("Reading message didn't work\n");
         continue;
-      }
-      else
-      {
+      } else {
         newMessage = 1;
       }
     }
@@ -154,196 +120,112 @@ void* recieveThread(void* sockArg)
   return NULL;
 }
 
-uint32_t checksumActualCalculation(const uint8_t* messageToSend, uint32_t messageLength)
-{
-    uint32_t workingRegister = 0;            // working register to not destroy messageToSend
-    uint32_t polynom = 0xEDB88320;          // polynom used in CRC-32 in reversed order
-
-    for (uint32_t i = 0; i < messageLength; ++i)   // for each byte in messageToSend:
-    {
-      workingRegister ^= messageToSend[i];       //  XOR it into the rightmost byte of the workingRegister
-      for (uint32_t j = 0; j < 8; ++j)          //  process 8 bits
-      {
-        uint32_t rightmost_bit_set = workingRegister & 1; // check whether shifting out a 1
-        workingRegister >>= 1;                           //   shift right
-
-        if (rightmost_bit_set)                          //  if we shifted out a 1:
-        {
-          workingRegister ^= polynom;                 //  Bitwise XOR the polynom into the workingRegister
-        }
-      }
+uint32_t checksumActualCalculation(const uint8_t* messageToSend, uint32_t messageLength) {
+  uint32_t reg = 0;
+  uint32_t poly = 0xEDB88320;
+  for (uint32_t i = 0; i < messageLength; ++i) {
+    reg ^= messageToSend[i];
+    for (uint32_t j = 0; j < 8; ++j) {
+      if (reg & 1) reg = (reg >> 1) ^ poly;
+      else reg >>= 1;
     }
-    return workingRegister;
+  }
+  return reg;
 }
 
-int checksumCalc(message messageToSend)
-{
-  messageToSend.checkSum = 0;
-
-  uint32_t result = checksumActualCalculation((const uint8_t*)&messageToSend, sizeof(message));
-
-  return result;
+int checksumCalc(message m) {
+  m.checkSum = 0;
+  return checksumActualCalculation((const uint8_t*)&m, sizeof(message));
 }
 
-int mySendTo(int sock, struct sockaddr* recvAddr)
-{
-  int randomNumber = rand()%100;
+int mySendTo(int sock, struct sockaddr* recvAddr, message* msg) {
+  int r = rand() % 100;
   int len = 0;
-
-  if (randomNumber <= 9)
-  {
-    msgToSend.checkSum--;
-    len = sendto(sock, &msgToSend, sizeof(message), 0, recvAddr,
-      sizeof(struct sockaddr_in));
-    if (len == -1)
-    {
-      printf("Error sending on socket\n");
-    }
-
+  if (r <= 9) {
+    msg->checkSum--;
+    len = sendto(sock, msg, sizeof(message), 0, recvAddr, sizeof(struct sockaddr_in));
+    perror("sendto failed");
     printf("Altering checksum\n");
-  }
-  else if (randomNumber >= 10 && randomNumber < 20)
-  {
-    //Don't send anything at all.
+  } else if (r < 20) {
     printf("Didn't send a packet at all\n");
-  }
-  else
-  {
-    len = sendto(sock, &msgToSend, sizeof(message), 0, recvAddr,
-                sizeof(struct sockaddr_in));
-    if (len == -1)
-    {
-      printf("Error sending on socket");
-    }
-
+  } else {
+    len = sendto(sock, msg, sizeof(message), 0, recvAddr, sizeof(struct sockaddr_in));
+    if (len == -1) perror("sendto failed");
     printf("Sent like normal\n");
   }
   return len;
 }
 
-
-//State machine functions
-void myconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
-{
-    /*Implement the three-way handshake state machine
-    for the connection setup*/
-
-    //Loop switch-case
-    while(state != CONNECTED) //Condition to leave the state machine
-    {
-        switch (state)
-        {
-            case INIT:
-                printf("CLIENT: INIT -> SENDING SYN\n");
-
-                msgToSend.flag = SYN;
-                msgToSend.seqNr = 0;
-                msgToSend.checkSum = checksumCalc(msgToSend);
-
-                mySendTo(sock, (struct sockaddr*)&clientAddr);
-                start_timer(3);
-
-                state = WAIT_FOR_SYNACK;
-
-                break;
-            case WAIT_FOR_SYNACK:
-                if (newMessage == 1 && messageRecvd.flag == SYNACK)
-                {
-                    newMessage = 0;
-
-                    // Check the checksum
-                    int recivedChecksum = messageRecvd.checkSum;
-                    messageRecvd.checkSum = 0;
-                    int calculatedChecksum = checksumCalc(messageRecvd);
-
-                    if (recivedChecksum == calculatedChecksum)
-                    {
-                      printf("CLIENT: WAIT_FOR_SYNACK -> SENDING ACK\n");
-
-                      msgToSend.flag = DATAACK;
-                      msgToSend.seqNr = 0;
-                      msgToSend.checkSum = checksumCalc(msgToSend);
-  
-                      mySendTo(sock, (struct sockaddr*)&clientAddr);
-  
-                      state = CONNECTED;
-                    }
-                    else
-                    {
-                      printf("CLIENT: Checksum mismatch - ignoring packet\n");
-                    }
-                    
-                }
-                break;
-            default:
-                printf("Invalid option\n");
-        }
-    }
-}
-
-void transmit()//Add input parameters if needed
-{
-
-  /*Implement the sliding window state machine*/
-
-  //local variables if needed
-
-
-  //Loop switch-case
-  while(1) //Add the condition to leave the state machine
-  {
-    switch (state)
-    {
-      default:
-        printf("Invalid option\n");
-    }
-  }
-}
-
-void disconnect(int sock, struct sockaddr_in* clientAddr)//Add input parameters if needed
-{
-
-  /*Implement the three-way handshake state machine
-  for the teardown*/
-
-  //local variables if needed
-    int nrTimeouts = 0;
-
-  //Loop switch-case
-  while(1) //Add the condition to leave the state machine
-  {
-    switch (state)
-    {
+void myconnect(int sock, struct sockaddr_in* clientAddr) {
+  while (state != CONNECTED) {
+    switch (state) {
       case INIT:
-          printf("CLIENT: INIT -> SENDING FIN\n");
-
-          msgToSend.flag = FIN;
-          msgToSend.seqNr = 0;
-          msgToSend.checkSum = checksumCalc(msgToSend);
-
-          mySendTo(sock, (struct sockaddr*)&clientAddr);
-          start_timer(3);
-
-          state = WAIT_FOR_FINACK;
-          break;
-      case WAIT_FOR_FINACK:
-          printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
-
-          msgToSend.flag = DATAACK;
-          msgToSend.seqNr = 0;
-          msgToSend.checkSum = checksumCalc(msgToSend);
-
-          mySendTo(sock, (struct sockaddr*)&clientAddr);
-
-          state = INIT;
-          break;
-
+        printf("CLIENT: INIT -> SENDING SYN\n");
+        msgToSend.flag = SYN;
+        msgToSend.seqNr = 0;
+        msgToSend.checkSum = checksumCalc(msgToSend);
+        mySendTo(sock, (struct sockaddr*)clientAddr, &msgToSend);
+        start_timer(3);
+        state = WAIT_FOR_SYNACK;
+        break;
+      case WAIT_FOR_SYNACK:
+        if (newMessage == 1 && messageRecvd.flag == SYNACK) {
+          newMessage = 0;
+          int receivedChecksum = messageRecvd.checkSum;
+          messageRecvd.checkSum = 0;
+          int calculatedChecksum = checksumCalc(messageRecvd);
+          if (receivedChecksum == calculatedChecksum) {
+            printf("CLIENT: WAIT_FOR_SYNACK -> SENDING ACK\n");
+            msgToSend.flag = DATAACK;
+            msgToSend.seqNr = 0;
+            msgToSend.checkSum = checksumCalc(msgToSend);
+            mySendTo(sock, (struct sockaddr*)clientAddr, &msgToSend);
+            state = CONNECTED;
+          } else {
+            printf("CLIENT: Checksum mismatch - ignoring packet\n");
+          }
+        }
+        break;
       default:
-        printf("Invalid option\n");
+        printf("Invalid connect state\n");
     }
   }
 }
 
+void transmit() {
+  while (1) {
+    switch (state) {
+      default:
+        printf("Invalid state\n");
+    }
+  }
+}
+
+void disconnect(int sock, struct sockaddr_in* clientAddr) {
+  while (1) {
+    switch (state) {
+      case INIT:
+        printf("CLIENT: INIT -> SENDING FIN\n");
+        msgToSend.flag = FIN;
+        msgToSend.seqNr = 0;
+        msgToSend.checkSum = checksumCalc(msgToSend);
+        mySendTo(sock, (struct sockaddr*)clientAddr, &msgToSend);
+        start_timer(3);
+        state = WAIT_FOR_FINACK;
+        break;
+      case WAIT_FOR_FINACK:
+        printf("CLIENT: WAIT_FOR_FINACK -> TERMINATING CONNECTION\n");
+        msgToSend.flag = DATAACK;
+        msgToSend.seqNr = 0;
+        msgToSend.checkSum = checksumCalc(msgToSend);
+        mySendTo(sock, (struct sockaddr*)clientAddr, &msgToSend);
+        state = INIT;
+        break;
+      default:
+        printf("Invalid disconnect state\n");
+    }
+  }
+}
 
 int main(int argc, char *argv[]) {
   struct sockaddr_in clientSock = {0};
@@ -352,64 +234,41 @@ int main(int argc, char *argv[]) {
 
   srand(time(NULL));
 
+  char dstHost[] = "127.0.0.1";
+  int dstUdpPort = PORT;
 
-  //The data to be sent
-  char dataContent[20][3] = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"};
-
-  char dstHost[] = "10.0.2.15";
-  int dstUdpPort = 5555;
-
-  //Setup signal handler for timeout
   struct sigaction saTimeout;
-
   saTimeout.sa_handler = timeout_handler;
   saTimeout.sa_flags = 0;
   sigaction(SIGALRM, &saTimeout, NULL);
 
-
-  //Check arguments
-  if(argv[1] == NULL)
-  {
-    perror("Usage: client [host name]\n");
+  if (argc < 2) {
+    fprintf(stderr, "Usage: %s [host name]\n", argv[0]);
     exit(EXIT_FAILURE);
   }
-  else
-  {
-    strncpy(hostName, argv[1], hostNameLength);
-    hostName[hostNameLength - 1] = '\0';
-  }
+  strncpy(hostName, argv[1], hostNameLength);
+  hostName[hostNameLength - 1] = '\0';
 
-
-  //Create the socket
-  if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-  {
-    fprintf(stderr, "Can't create UDP socket\n");
+  if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+    perror("Can't create UDP socket");
     exit(EXIT_FAILURE);
   }
 
-  clientSock.sin_family = AF_INET;
-  clientSock.sin_port = htons(5552);
-  clientSock.sin_addr.s_addr = inet_addr("10.0.2.15");
-
-
-  if(bind(sock, (struct sockaddr *)&clientSock, sizeof(clientSock)) < 0) {
-    perror("Could not bind a name to the socket\n");
+  if (bind(sock, (struct sockaddr *)&clientSock, sizeof(clientSock)) < 0) {
+    perror("Could not bind a name to the socket");
     exit(EXIT_FAILURE);
   }
 
-
-  //Create the receiving thread
   pthread_create(&recvt, NULL, recieveThread, &sock);
 
   clientAddr.sin_family = AF_INET;
   clientAddr.sin_port = htons(dstUdpPort);
   clientAddr.sin_addr.s_addr = inet_addr(dstHost);
 
-
-  myconnect(sock, &clientAddr);//Add arguments if needed
-  transmit();//Add arguments if needed
-  disconnect(sock, &clientAddr);//Add arguments if needed
-
+  myconnect(sock, &clientAddr);
+  transmit();
+  disconnect(sock, &clientAddr);
 
   return 0;
 }
+
